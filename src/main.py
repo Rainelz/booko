@@ -23,7 +23,7 @@ bot.
 
 import logging
 
-
+import os
 from telegram import __version__ as TG_VER, InlineKeyboardButton, InlineKeyboardMarkup
 from booko import get_fields_filtered, get_home_coords, format_results
 from datetime import date
@@ -304,8 +304,10 @@ def main() -> None:
     """Run the bot."""
 
     # Create the Application and pass it your bot's token.
-
-    application = Application.builder().token(TOKEN).build()
+    mode = os.environ.get("MODE", "polling")
+    token = os.environ.get("TOKEN")
+    expose_url = os.environ.get("EXPOSE_URL", "")
+    application = Application.builder().token(token).build()
 
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
 
@@ -361,8 +363,10 @@ def main() -> None:
     application.add_handler(conv_handler)
 
     # Run the bot until the user presses Ctrl-C
-
-    application.run_polling()
+    if mode == "webhook":
+        application.run_webhook(listen="0.0.0.0", url_path=token, webhook_url=f"{expose_url}/{token}")
+    else:
+        application.run_polling()
 
 
 if __name__ == "__main__":
