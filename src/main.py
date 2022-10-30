@@ -23,6 +23,8 @@ bot.
 import logging
 
 import os
+import traceback
+
 from telegram import __version__ as TG_VER, InlineKeyboardButton, InlineKeyboardMarkup
 from booko import get_fields_filtered, get_home_coords, format_results
 from datetime import date
@@ -131,12 +133,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def prompt_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     """Stores the info about the user and ends the conversation."""
-
-    user = update.message.from_user
-    address = update.message.text
+    message = update.message or update.callback_query.message
     reply_keyboard = [["1", "2", "5", "10", "15", "20"]]
-    await update.message.reply_text(
-        f"Great, will do search for {address}-\nNow select a distance for filtering",
+    await message.reply_text(
+        f"Now select a distance for filtering",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard,
             one_time_keyboard=True,
@@ -175,7 +175,7 @@ async def tenant_filter_choice(update: Update, context: ContextTypes.DEFAULT_TYP
             return HANDLE_NAMES
         case TenantCallback.DEFAULT:
             await query.edit_message_text(
-                text="ok, will default to Milan",
+                text="Will default to Milan",
             )
 
             return await prompt_distance(update, context)
@@ -208,26 +208,13 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     """Stores the selected gender and asks for a photo."""
 
-    user = update.message.from_user
-    address = update.message.text
-    coords = get_home_coords(address)
-    context.user_data["coords"] = coords
+
     ### do something with address
     user = update.message.from_user
 
     user_location = update.message.location
-
-    logger.info(
-
-        "Location of %s: %f / %f", user.first_name, user_location.latitude, user_location.longitude
-
-    )
-
-    await update.message.reply_text(
-
-        "Maybe I can visit you sometime! At last, tell me something about yourself."
-
-    )
+    coords = user_location.latitude, user_location.longitude
+    context.user_data["coords"] = coords
 
     return await prompt_distance(update, context)
 
@@ -299,6 +286,10 @@ async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     """Stores the selected gender and asks for a photo."""
     from datetime import datetime, timedelta
 
+    msg = await update.message.reply_text(
+        f"Got ya. Let me fetch the results...",
+        # reply_markup=ReplyKeyboardRemove(remove_keyboard = True)
+    )
     today = datetime.today()
     tomorrow = today + timedelta(days=1)
     user = update.message.from_user
@@ -316,7 +307,16 @@ async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
         [date_input],
     )
     result_str = format_results(result)
-    await update.message.reply_text(result_str)
+    if result_str != "":
+
+        await msg.edit_text("Done")
+        await update.message.reply_text(
+                result_str,
+                reply_markup=ReplyKeyboardRemove()
+            )
+    else:
+        await msg.edit_text("Didn't find any field with selected filters")
+
 
     return END
 
@@ -336,6 +336,33 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    """Log the error and send a telegram message to notify the developer."""
+
+    # Log the error before we do anything else, so we can see it even if something breaks.
+
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+
+    # traceback.format_exception returns the usual python message about an exception, but as a
+
+    # list of strings rather than a single string, so we have to join them together.
+
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+
+    tb_string = "".join(tb_list)
+
+
+    # Build the message with some markup and additional information about what happened.
+
+    # You might need to add some logic to deal with messages longer than the 4096 character limit.
+
+    update_str = update.to_dict() if isinstance(update, Update) else str(update)
+
+    await update.message.reply_text("Something went wrong. Please start again", reply_markup=ReplyKeyboardRemove())
+
+
 def main() -> None:
 
     """Run the bot."""
@@ -350,7 +377,7 @@ def main() -> None:
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler("start", start), CommandHandler("fields", start)],
         states={
             TENANT_FILTER: [
                 CallbackQueryHandler(
@@ -390,7 +417,7 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
-
+    application.add_error_handler(error_handler)
     # Run the bot until the user presses Ctrl-C
     if mode == "webhook":
         application.run_webhook(

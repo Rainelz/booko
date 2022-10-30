@@ -60,6 +60,7 @@ def get_home_coords(
 def get_tenants(
     home_coords: tuple[float, float], field_names: list|None, max_distance
 ) -> list:
+    home_coords = home_coords or MILAN_COORDS
     lat, lon = home_coords
     tenants_query = "https://playtomic.io/api/v1/tenants?user_id=me&playtomic_status=ACTIVE&with_properties=ALLOWS_CASH_PAYMENT&coordinate={latitude}%2C{longitude}&sport_id=TENNIS&radius=50000&size=100"
     res = requests.get(tenants_query.format(latitude=lat, longitude=lon))
