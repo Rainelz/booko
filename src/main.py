@@ -1,4 +1,3 @@
-
 """
 
 First, a few callback functions are defined. Then, those functions are passed to
@@ -27,6 +26,7 @@ import os
 from telegram import __version__ as TG_VER, InlineKeyboardButton, InlineKeyboardMarkup
 from booko import get_fields_filtered, get_home_coords, format_results
 from datetime import date
+
 try:
 
     from telegram import __version_info__
@@ -70,11 +70,14 @@ from enum import Enum, auto
 class TenantCallback(str, Enum):
     LOCATION = auto()
     ADDRESS = auto()
-    TENANT_NAMES= auto()
+    TENANT_NAMES = auto()
     DEFAULT = auto()
 
+
 # states
-TENANT_FILTER, PRICE_FILTER, DISTANCE_FILTER, HOURS_FILTER, DATES_FILTER = map(chr, range(5))
+TENANT_FILTER, PRICE_FILTER, DISTANCE_FILTER, HOURS_FILTER, DATES_FILTER = map(
+    chr, range(5)
+)
 
 # states for tenant_strategy
 HANDLE_LOCATION, HANDLE_ADDRESS, HANDLE_NAMES, HANDLE_DEFAULT = map(chr, range(5, 9))
@@ -106,7 +109,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         [
             InlineKeyboardButton("Address", callback_data=TenantCallback.ADDRESS),
             InlineKeyboardButton("Location", callback_data=TenantCallback.LOCATION),
-            InlineKeyboardButton("Field Names", callback_data=TenantCallback.TENANT_NAMES),
+            InlineKeyboardButton(
+                "Field Names", callback_data=TenantCallback.TENANT_NAMES
+            ),
             InlineKeyboardButton("Milan", callback_data=TenantCallback.DEFAULT),
         ]
     ]
@@ -142,9 +147,7 @@ async def prompt_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return DISTANCE_FILTER
 
 
-async def tenant_filter_choice(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
+async def tenant_filter_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     """Show new choice of buttons"""
 
@@ -175,7 +178,7 @@ async def tenant_filter_choice(
                 text="ok, will default to Milan",
             )
 
-            return HANDLE_DEFAULT
+            return await prompt_distance(update, context)
         case _:
             await query.edit_message_text(
                 text="unrecognized choice",
@@ -189,9 +192,6 @@ async def tenant_filter_choice(
     # ),
 
 
-
-
-
 async def handle_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
@@ -199,8 +199,35 @@ async def handle_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.message.from_user
     address = update.message.text
     coords = get_home_coords(address)
-    context.user_data['coords'] = coords
+    context.user_data["coords"] = coords
     ### do something with address
+
+    return await prompt_distance(update, context)
+
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+
+    """Stores the selected gender and asks for a photo."""
+
+    user = update.message.from_user
+    address = update.message.text
+    coords = get_home_coords(address)
+    context.user_data["coords"] = coords
+    ### do something with address
+    user = update.message.from_user
+
+    user_location = update.message.location
+
+    logger.info(
+
+        "Location of %s: %f / %f", user.first_name, user_location.latitude, user_location.longitude
+
+    )
+
+    await update.message.reply_text(
+
+        "Maybe I can visit you sometime! At last, tell me something about yourself."
+
+    )
 
     return await prompt_distance(update, context)
 
@@ -210,7 +237,7 @@ async def handle_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user = update.message.from_user
     distance = update.message.text
-    context.user_data['distance'] = int(distance)
+    context.user_data["distance"] = int(distance)
     reply_keyboard = [["10", "15", "30"]]
     await update.message.reply_text(
         f"Great, will max out at {distance} km- Now select a price for filtering",
@@ -223,13 +250,14 @@ async def handle_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     return PRICE_FILTER
 
+
 async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
 
     user = update.message.from_user
     price = update.message.text
-    context.user_data['max_price'] = int(price)
+    context.user_data["max_price"] = int(price)
     reply_keyboard = [["10:00", "15:00", "18:00"]]
     await update.message.reply_text(
         f"Great, will show results at max {price} euro- Now select a start hour for filtering",
@@ -242,15 +270,17 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
 
     return HOURS_FILTER
 
+
 async def handle_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
     from datetime import datetime, timedelta
+
     today = datetime.today()
     tomorrow = today + timedelta(days=1)
     user = update.message.from_user
     hour = update.message.text
-    context.user_data['min_hour'] = hour.split(':')[0]
+    context.user_data["min_hour"] = hour.split(":")[0]
     reply_keyboard = [[today.strftime("%d-%m"), tomorrow.strftime("%d-%m")]]
     await update.message.reply_text(
         f"Great, will show results at max {hour}\nNow select dates for filtering",
@@ -263,25 +293,32 @@ async def handle_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str
 
     return DATES_FILTER
 
+
 async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
     from datetime import datetime, timedelta
+
     today = datetime.today()
     tomorrow = today + timedelta(days=1)
     user = update.message.from_user
     date_input = update.message.text
-    date_input = date.fromisoformat(f"{today.year}-{date_input.split('-')[1]}-{date_input.split('-')[0]}")
-    user_data = context.user_data
-    result = get_fields_filtered(user_data.get('coords', None), user_data.get('field_names', None), user_data['distance'], user_data['min_hour'], user_data['max_price'], [date_input])
-    result_str = format_results(result)
-    await update.message.reply_text(
-        result_str
-
+    date_input = date.fromisoformat(
+        f"{today.year}-{date_input.split('-')[1]}-{date_input.split('-')[0]}"
     )
+    user_data = context.user_data
+    result = get_fields_filtered(
+        user_data.get("coords", None),
+        user_data.get("field_names", None),
+        user_data["distance"],
+        user_data["min_hour"],
+        user_data["max_price"],
+        [date_input],
+    )
+    result_str = format_results(result)
+    await update.message.reply_text(result_str)
 
     return END
-
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -306,6 +343,7 @@ def main() -> None:
     # Create the Application and pass it your bot's token.
     mode = os.environ.get("MODE", "polling")
     token = os.environ.get("TOKEN")
+    port = os.environ.get("PORT", "7880")
     expose_url = os.environ.get("EXPOSE_URL", "")
     application = Application.builder().token(token).build()
 
@@ -316,37 +354,28 @@ def main() -> None:
         states={
             TENANT_FILTER: [
                 CallbackQueryHandler(
-                    tenant_filter_choice# , pattern="^" + str(ADDRESS) + "$"
+                    tenant_filter_choice
                 ),
-                # CallbackQueryHandler(
-                #     tenant_filter_choice, pattern="^" + str(ADDRESS) + "$"
-                # ),
-                # CallbackQueryHandler(
-                #     tenant_filter_choice, pattern="^" + str(ADDRESS) + "$"
-                # ),
-                # CallbackQueryHandler(
-                #     tenant_filter_choice, pattern="^" + str(ADDRESS) + "$"
-                # ),
+
             ],
             HANDLE_ADDRESS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_address)
             ],
-            DISTANCE_FILTER:[
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_distance)
-
+            HANDLE_LOCATION: [
+                MessageHandler(filters.LOCATION, handle_location),
             ],
-            PRICE_FILTER:[
-                            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)
-
-                        ],
-            HOURS_FILTER:[
-                            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hour)
-
-                        ],
-            DATES_FILTER:[
-                            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dates)
-
-                        ],
+            DISTANCE_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_distance)
+            ],
+            PRICE_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)
+            ],
+            HOURS_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hour)
+            ],
+            DATES_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dates)
+            ],
             # PHOTO: [
             #     MessageHandler(filters.PHOTO, photo),
             #     CommandHandler("skip", skip_photo),
@@ -364,7 +393,9 @@ def main() -> None:
 
     # Run the bot until the user presses Ctrl-C
     if mode == "webhook":
-        application.run_webhook(listen="0.0.0.0", url_path=token, webhook_url=f"{expose_url}/{token}")
+        application.run_webhook(
+            listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{expose_url}/{token}"
+        )
     else:
         application.run_polling()
 
