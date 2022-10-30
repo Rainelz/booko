@@ -1,4 +1,5 @@
 import time
+from collections import defaultdict
 
 import requests
 from datetime import date, timedelta, datetime, timezone
@@ -57,14 +58,14 @@ def get_home_coords(
 
 
 def get_tenants(
-    home_coords: tuple[float, float], field_names: list, max_distance
+    home_coords: tuple[float, float], field_names: list|None, max_distance
 ) -> list:
     lat, lon = home_coords
     tenants_query = "https://playtomic.io/api/v1/tenants?user_id=me&playtomic_status=ACTIVE&with_properties=ALLOWS_CASH_PAYMENT&coordinate={latitude}%2C{longitude}&sport_id=TENNIS&radius=50000&size=100"
     res = requests.get(tenants_query.format(latitude=lat, longitude=lon))
     tenants = res.json()
     filtered_tenants = []
-    if len(field_names):
+    if field_names:
         tenants = filter(
             lambda x: any(
                 field_name.lower() in x["tenant_name"].lower()
@@ -117,23 +118,24 @@ def filter_fields(fields, max_price):
     return filtered_fields
 
 
-def main(args):
-    # Use a breakpoint in the code line below to debug your script.
-    if not args.field_names:
-        coords = get_home_coords(args.address)
-    else:
-        coords = MILAN_COORDS
-    tenants = get_tenants(coords, args.field_names, args.max_distance)
-    dates = args.dates
+def get_fields_filtered(
+    coords, field_names, max_distance, start_hour, max_price, dates
+):
+    found_fields = defaultdict(list)
+
+    tenants = get_tenants(coords, field_names, max_distance)
+    dates = dates
     for date in dates:
-        print(f"Searching fields for date: {date}")
         for tenant in tenants:
-            fields = get_fields_for_tenant(tenant, date, args.start_hour)
-            filtered_fields = filter_fields(fields, args.max_price)
-            if filtered_fields:
-                print(f"{tenant['tenant_name']}")
-            else:
-                print(f"No field found @ {tenant['tenant_name']}")
+            fields = get_fields_for_tenant(tenant, date, start_hour)
+            filtered_fields = filter_fields(fields, max_price)
+            if not filtered_fields:
+                continue
+            tenant_result = {
+                k: tenant[k]
+                for k in ["tenant_name", "tenant_id", "address", "distance"]
+            }
+            tenant_result["fields"] = []
             for field in filtered_fields:
                 # python has no find :(
                 field_info = next(
@@ -144,20 +146,58 @@ def main(args):
                     ),
                     None,  # default value if not found
                 )
-                print(
-                    f"\tSlots for {field_info['name']} - {field_info['properties']['resource_type']}"
-                )
-                for slot in field["slots"]:
 
+                tenant_result["fields"].append({**field_info, **field})
+                # for slot in field["slots"]:
+                #     start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
+                #     start_h = datetime.combine(
+                #         date, start_h.time(), tzinfo=timezone.utc
+                #     )
+                #     start_h = start_h.astimezone(localtz)
+
+            found_fields[date].append(tenant_result)
+    return found_fields
+
+
+def format_results(found_fields: dict[str, dict]):
+    result_str = ""
+    for date, tenants in found_fields.items():
+        result_str += f"Found fields for date: {date}\n"
+        for tenant in tenants:
+            result_str += f"{tenant['tenant_name']}\n"
+
+            for field in tenant["fields"]:
+                result_str += f"\tSlots for {field['name']} - {field['properties']['resource_type']}\n"
+                for slot in field["slots"]:
                     start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
                     start_h = datetime.combine(
                         date, start_h.time(), tzinfo=timezone.utc
                     )
                     start_h = start_h.astimezone(localtz)
-                    print(
-                        f"\t\tat {start_h.strftime('%H:%M')} duration: {slot['duration']} mins PRICE: {slot['price']}"
-                    )
-        print("=======================================")
+                    result_str += f"\t\tat {start_h.strftime('%H:%M')} duration: {slot['duration']} mins PRICE: {slot['price']}\n"
+
+        result_str+= "=======================================\n"
+    return result_str
+
+def main(args):
+    # Use a breakpoint in the code line below to debug your script.
+    if not args.field_names:
+        coords = get_home_coords(args.address)
+    else:
+        coords = MILAN_COORDS
+    tenants = get_tenants(coords, args.field_names, args.max_distance)
+    dates = args.dates
+
+    found_fields = get_fields_filtered(
+        coords,
+        args.field_names,
+        args.max_distance,
+        args.start_hour,
+        args.max_price,
+        args.dates,
+    )
+    result = format_results(found_fields)
+    print(result)
 
 
 # Press the green button in the gutter to run the script.
