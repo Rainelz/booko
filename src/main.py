@@ -24,10 +24,12 @@ import logging
 
 import os
 import traceback
+from zoneinfo import ZoneInfo
 
+import telegram
 from telegram import __version__ as TG_VER, InlineKeyboardButton, InlineKeyboardMarkup
-from booko import get_fields_filtered, get_home_coords, format_results
-from datetime import date
+from booko import get_fields_filtered, get_home_coords
+from datetime import date, datetime, timezone
 
 try:
 
@@ -204,10 +206,10 @@ async def handle_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return await prompt_distance(update, context)
 
+
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
-
 
     ### do something with address
     user = update.message.from_user
@@ -217,6 +219,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["coords"] = coords
 
     return await prompt_distance(update, context)
+
 
 async def handle_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
@@ -281,18 +284,41 @@ async def handle_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str
     return DATES_FILTER
 
 
+def format_results(found_fields: dict[str, dict]):
+    result_str = ""
+    localtz = ZoneInfo("Europe/Rome")
+
+    for date, tenants in found_fields.items():
+        result_str += f"Found fields for date: {date}\n"
+        for tenant in tenants:
+            result_str += f"\n<b>{tenant['tenant_name']}</b>\n\n"
+
+            for field in tenant["fields"]:
+                result_str += f"\t{field['name']} - {field['properties']['resource_type']}\n"
+                for slot in field["slots"]:
+                    start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
+                    start_h = datetime.combine(
+                        date, start_h.time(), tzinfo=timezone.utc
+                    )
+                    start_h = start_h.astimezone(localtz)
+                    result_str += f"\t\t\t@ {start_h.strftime('%H:%M')} {slot['duration']} mins {slot['price'].replace('EUR', '€')}\n"
+
+        result_str += "=======================================\n"
+    return result_str
+
+
 async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
     """Stores the selected gender and asks for a photo."""
-    from datetime import datetime, timedelta
 
     msg = await update.message.reply_text(
         f"Got ya. Let me fetch the results...",
         # reply_markup=ReplyKeyboardRemove(remove_keyboard = True)
     )
+    await update.message.reply_chat_action(action=telegram.constants.ChatAction.TYPING)
     today = datetime.today()
-    tomorrow = today + timedelta(days=1)
-    user = update.message.from_user
+
+    # user = update.message.from_user
     date_input = update.message.text
     date_input = date.fromisoformat(
         f"{today.year}-{date_input.split('-')[1]}-{date_input.split('-')[0]}"
@@ -311,12 +337,12 @@ async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
 
         await msg.edit_text("Done")
         await update.message.reply_text(
-                result_str,
-                reply_markup=ReplyKeyboardRemove()
-            )
+            result_str,
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode=telegram.constants.ParseMode.HTML,
+        )
     else:
         await msg.edit_text("Didn't find any field with selected filters")
-
 
     return END
 
@@ -344,15 +370,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
-
     # traceback.format_exception returns the usual python message about an exception, but as a
 
     # list of strings rather than a single string, so we have to join them together.
 
-    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_list = traceback.format_exception(
+        None, context.error, context.error.__traceback__
+    )
 
     tb_string = "".join(tb_list)
-
 
     # Build the message with some markup and additional information about what happened.
 
@@ -360,7 +386,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
     update_str = update.to_dict() if isinstance(update, Update) else str(update)
 
-    await update.message.reply_text("Something went wrong. Please start again", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(
+        "Something went wrong. Please start again", reply_markup=ReplyKeyboardRemove()
+    )
+    return END
 
 
 def main() -> None:
@@ -380,10 +409,7 @@ def main() -> None:
         entry_points=[CommandHandler("start", start), CommandHandler("fields", start)],
         states={
             TENANT_FILTER: [
-                CallbackQueryHandler(
-                    tenant_filter_choice
-                ),
-
+                CallbackQueryHandler(tenant_filter_choice),
             ],
             HANDLE_ADDRESS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_address)
@@ -421,7 +447,10 @@ def main() -> None:
     # Run the bot until the user presses Ctrl-C
     if mode == "webhook":
         application.run_webhook(
-            listen="0.0.0.0", port=port, url_path=token, webhook_url=f"{expose_url}/{token}"
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"{expose_url}/{token}",
         )
     else:
         application.run_polling()
