@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 import telegram
 from telegram import __version__ as TG_VER, InlineKeyboardButton, InlineKeyboardMarkup
-from booko import get_fields_filtered, get_home_coords
+from booko import get_fields_filtered, get_home_coords, DEFAULT_SURFACES, DEFAULT_TYPES
 from datetime import date, datetime, timezone
 
 try:
@@ -79,12 +79,18 @@ class TenantCallback(str, Enum):
 
 
 # states
-TENANT_FILTER, PRICE_FILTER, DISTANCE_FILTER, HOURS_FILTER, DATES_FILTER = map(
-    chr, range(5)
-)
+(
+    TENANT_FILTER,
+    PRICE_FILTER,
+    DISTANCE_FILTER,
+    HOURS_FILTER,
+    SURFACES_FILTER,
+    TYPES_FILTER,
+    DATES_FILTER,
+) = map(chr, range(7))
 
 # states for tenant_strategy
-HANDLE_LOCATION, HANDLE_ADDRESS, HANDLE_NAMES, HANDLE_DEFAULT = map(chr, range(5, 9))
+HANDLE_LOCATION, HANDLE_ADDRESS, HANDLE_NAMES, HANDLE_DEFAULT = map(chr, range(7, 11))
 # Callback data
 # LOCATION, ADDRESS, TENANT_NAMES, DEFAULT = range(9, 13)
 # Shortcut for ConversationHandler.END
@@ -100,7 +106,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
 
     logger.info("User %s started the conversation.", user.first_name)
-
+    context.user_data.clear()
     # Build InlineKeyboard where each button has a displayed text
 
     # and a string as callback_data
@@ -248,17 +254,86 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     user = update.message.from_user
     price = update.message.text
     context.user_data["max_price"] = int(price)
-    reply_keyboard = [["10:00", "15:00", "18:00"]]
+    surfaces = [surface + "❌" for surface in DEFAULT_SURFACES]
+    reply_keyboard = [surfaces[:2], surfaces[2:], ["all"]]
     await update.message.reply_text(
-        f"Great, will show results at max {price} euro- Now select a start hour for filtering",
+        f"Great, will show results at max {price} euro- Now select the target surfaces you want to play on",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard,
             one_time_keyboard=True,
-            input_field_placeholder="Max hour?",
+            input_field_placeholder="Surfaces?",
         ),
     )
+    #
+    # return HOURS_FILTER
 
-    return HOURS_FILTER
+    return SURFACES_FILTER
+    # reply_keyboard = [["10:00", "15:00", "18:00"]]
+    # await update.message.reply_text(
+    #     f"Great, will show results at max {price} euro- Now select a start hour for filtering",
+    #     reply_markup=ReplyKeyboardMarkup(
+    #         reply_keyboard,
+    #         one_time_keyboard=True,
+    #         input_field_placeholder="Max hour?",
+    #     ),
+    # )
+    #
+    # return HOURS_FILTER
+
+
+async def handle_surfaces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+
+    """Stores the selected gender and asks for a photo."""
+
+    user = update.message.from_user
+    surface = update.message.text
+    if surface == "all":
+        context.user_data["surfaces"] = None
+        reply_keyboard = [["10:00", "15:00", "18:00"]]
+        await update.message.reply_text(
+            f"Great,  will include {surface} in the filtering- Now select a start hour (or type it) for filtering",
+            reply_markup=ReplyKeyboardMarkup(
+                reply_keyboard,
+                one_time_keyboard=True,
+                input_field_placeholder="Max hour?",
+            ),
+        )
+
+        return HOURS_FILTER
+    else:
+        if surface == "done":
+            reply_keyboard = [["10:00", "15:00", "18:00"]]
+            await update.message.reply_text(
+                f"Great,  will include {context.user_data['surfaces']} in the filtering- Now select a start hour (or type it) for filtering",
+                reply_markup=ReplyKeyboardMarkup(
+                    reply_keyboard,
+                    one_time_keyboard=True,
+                    input_field_placeholder="Max hour?",
+                ),
+            )
+
+            return HOURS_FILTER
+
+        context.user_data["surfaces"] = context.user_data.get("surfaces", []) + [
+            surface[:-1]
+        ]
+        choices = [
+            _surface + "✅"
+            if _surface in context.user_data["surfaces"]
+            else _surface + "❌"
+            for _surface in DEFAULT_SURFACES
+        ]
+        reply_keyboard = [choices[:2], choices[2:], ["all", "done"]]
+        await update.message.reply_text(
+            f"Great, will include {surface[:-1]} in the filtering- Now select another one or click done",
+            reply_markup=ReplyKeyboardMarkup(
+                reply_keyboard,
+                one_time_keyboard=True,
+                input_field_placeholder="Surfaces?",
+            ),
+        )
+
+        return SURFACES_FILTER
 
 
 async def handle_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -294,7 +369,7 @@ def format_results(found_fields: dict[str, dict]):
             result_str += f"\n<b>{tenant['tenant_name']}</b>\n\n"
 
             for field in tenant["fields"]:
-                result_str += f"\t{field['name']} - {field['properties']['resource_type']}\n"
+                result_str += f"\t{field['name']} - {field['properties']['resource_type']} - {field['properties']['resource_feature']}\n"
                 for slot in field["slots"]:
                     start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
                     start_h = datetime.combine(
@@ -331,6 +406,7 @@ async def handle_dates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
         user_data["min_hour"],
         user_data["max_price"],
         [date_input],
+        user_data["surfaces"],
     )
     result_str = format_results(result)
     if result_str != "":
@@ -423,21 +499,18 @@ def main() -> None:
             PRICE_FILTER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)
             ],
+            SURFACES_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surfaces)
+            ],
+            TYPES_FILTER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surfaces)
+            ],
             HOURS_FILTER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hour)
             ],
             DATES_FILTER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dates)
             ],
-            # PHOTO: [
-            #     MessageHandler(filters.PHOTO, photo),
-            #     CommandHandler("skip", skip_photo),
-            # ],
-            # LOCATION: [
-            #     MessageHandler(filters.LOCATION, location),
-            #     CommandHandler("skip", skip_location),
-            # ],
-            # BIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, bio)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )

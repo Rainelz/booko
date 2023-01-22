@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 
 DEFAULT_ADDR = "piazza duomo Milan"
+DEFAULT_SURFACES = ["synthetic_grass", "clay", "concrete", "quick"]
+DEFAULT_TYPES = ["outdoor", "indoor", "roofed"]
 MAX_DISTANCE = 10
 MAX_PRICE = 30
 MILAN_COORDS = (45.463910150000004, 9.190642626255652)
@@ -35,7 +37,7 @@ def calc_distance(point_a: tuple[float, float], point_b: tuple[float, float]):
 
 
 def get_home_coords(
-    address,
+    address: str,
 ) -> tuple[float, float]:
     api_url = "https://nominatim.openstreetmap.org/search?q={query}&format=json"
     if not address:
@@ -58,7 +60,7 @@ def get_home_coords(
 
 
 def get_tenants(
-    home_coords: tuple[float, float], field_names: list|None, max_distance
+    home_coords: tuple[float, float], field_names: list | None, max_distance
 ) -> list:
     home_coords = home_coords or MILAN_COORDS
     lat, lon = home_coords
@@ -96,7 +98,7 @@ def get_date_range():
     return [today.isoformat(), tomorrow.isoformat()]
 
 
-def get_fields_for_tenant(tenant, date: date, start_hour: str):
+def get_available_fields_for_tenant(tenant: dict, date: date, start_hour: str):
     api_url = f"https://playtomic.io/api/v1/availability?user_id=me&tenant_id={tenant['tenant_id']}&sport_id=TENNIS&local_start_min={date}T{start_hour}%3A00%3A00&local_start_max={date}T23%3A59%3A59"
     res = requests.get(api_url)
     fields = res.json()
@@ -104,63 +106,73 @@ def get_fields_for_tenant(tenant, date: date, start_hour: str):
     return fields
 
 
-def filter_fields(fields, max_price):
+def filter_fields(
+    fields: list,
+    max_price: int,
+    surfaces: list | None = None,
+    types: list | None = None,
+):
     filtered_fields = []
 
+    surfaces = surfaces or DEFAULT_SURFACES
+
+    types = types or DEFAULT_TYPES
+
     for field in fields:
-        filtered_slots = list(
-            filter(
-                lambda x: float(x["price"].replace("EUR", "").strip()) <= max_price,
-                field["slots"],
+        if (
+            field["properties"]["resource_type"] in types
+            and field["properties"]["resource_feature"] in surfaces
+        ):
+            filtered_slots = list(
+                filter(
+                    lambda x: float(x["price"].replace("EUR", "").strip()) <= max_price,
+                    field["slots"],
+                )
             )
-        )
-        if filtered_slots:
-            filtered_fields.append({**field, "slots": filtered_slots})
+            if filtered_slots:
+                filtered_fields.append({**field, "slots": filtered_slots})
     return filtered_fields
 
 
 def get_fields_filtered(
-    coords, field_names, max_distance, start_hour, max_price, dates
+    coords: tuple[float, float],
+    field_names: list | None,
+    max_distance: int,
+    start_hour: str,
+    max_price: int,
+    dates: list[date],
+    surfaces: list | None = None,
+    types: list | None = None,
 ):
-    found_fields = defaultdict(list)
+    found_fields : dict[date, list] = defaultdict(list)
 
     tenants = get_tenants(coords, field_names, max_distance)
     dates = dates
-    for date in dates:
+    for _date in dates:
         for tenant in tenants:
-            fields = get_fields_for_tenant(tenant, date, start_hour)
-            filtered_fields = filter_fields(fields, max_price)
+            tenant_fields_info_by_key = {
+                field_info["resource_id"]: field_info
+                for field_info in tenant["resources"]
+            }
+            fields = get_available_fields_for_tenant(tenant, _date, start_hour)
+            fields = [
+                {**field, **tenant_fields_info_by_key[field["resource_id"]]}
+                for field in fields
+            ]
+            filtered_fields = filter_fields(fields, max_price, surfaces, types)
             if not filtered_fields:
                 continue
             tenant_result = {
                 k: tenant[k]
                 for k in ["tenant_name", "tenant_id", "address", "distance"]
             }
-            tenant_result["fields"] = []
-            for field in filtered_fields:
-                # python has no find :(
-                field_info = next(
-                    (
-                        field_info
-                        for field_info in tenant["resources"]
-                        if field["resource_id"] == field_info["resource_id"]
-                    ),
-                    None,  # default value if not found
-                )
+            tenant_result["fields"] = filtered_fields
 
-                tenant_result["fields"].append({**field_info, **field})
-                # for slot in field["slots"]:
-                #     start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
-                #     start_h = datetime.combine(
-                #         date, start_h.time(), tzinfo=timezone.utc
-                #     )
-                #     start_h = start_h.astimezone(localtz)
-
-            found_fields[date].append(tenant_result)
+            found_fields[_date].append(tenant_result)
     return found_fields
 
 
-def format_results(found_fields: dict[str, dict]):
+def format_results(found_fields: dict[date, dict]):
     result_str = ""
     for date, tenants in found_fields.items():
         result_str += f"Found fields for date: {date}\n"
@@ -168,7 +180,7 @@ def format_results(found_fields: dict[str, dict]):
             result_str += f"{tenant['tenant_name']}\n"
 
             for field in tenant["fields"]:
-                result_str += f"\tSlots for {field['name']} - {field['properties']['resource_type']}\n"
+                result_str += f"\tSlots for {field['name']} - {field['properties']['resource_type']} - {field['properties']['resource_feature']}\n"
                 for slot in field["slots"]:
                     start_h = datetime.strptime(slot["start_time"], "%H:%M:%S")
                     start_h = datetime.combine(
@@ -177,8 +189,9 @@ def format_results(found_fields: dict[str, dict]):
                     start_h = start_h.astimezone(localtz)
                     result_str += f"\t\tat {start_h.strftime('%H:%M')} duration: {slot['duration']} mins PRICE: {slot['price']}\n"
 
-        result_str+= "=======================================\n"
+        result_str += "=======================================\n"
     return result_str
+
 
 def main(args):
     # Use a breakpoint in the code line below to debug your script.
