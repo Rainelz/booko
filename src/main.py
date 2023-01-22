@@ -254,15 +254,22 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
     user = update.message.from_user
     price = update.message.text
     context.user_data["max_price"] = int(price)
-    surfaces = [surface + "❌" for surface in DEFAULT_SURFACES]
-    reply_keyboard = [surfaces[:2], surfaces[2:], ["all"]]
+
+    buttons = [
+        InlineKeyboardButton(surface + " ❌", callback_data=surface)
+        for surface in DEFAULT_SURFACES
+    ]
+
+    keyboard = [
+        buttons[:2],
+        buttons[2:],
+        [InlineKeyboardButton("All", callback_data="all")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
         f"Great, will show results at max {price} euro- Now select the target surfaces you want to play on",
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard,
-            one_time_keyboard=True,
-            input_field_placeholder="Surfaces?",
-        ),
+        reply_markup=reply_markup,
     )
     #
     # return HOURS_FILTER
@@ -285,26 +292,31 @@ async def handle_surfaces(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     """Stores the selected gender and asks for a photo."""
 
-    user = update.message.from_user
-    surface = update.message.text
-    if surface == "all":
-        context.user_data["surfaces"] = None
-        reply_keyboard = [["10:00", "15:00", "18:00"]]
-        await update.message.reply_text(
-            f"Great,  will include {surface} in the filtering- Now select a start hour (or type it) for filtering",
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard,
-                one_time_keyboard=True,
-                input_field_placeholder="Max hour?",
-            ),
-        )
+    # user = update.message.from_user
+    query = update.callback_query
+    surface = query.data
+    match surface:
+        case "all":
+            buttons = [
+                InlineKeyboardButton(_surface + "✅", callback_data=_surface)
+                for _surface in DEFAULT_SURFACES
+            ]
 
-        return HOURS_FILTER
-    else:
-        if surface == "done":
+            keyboard = [
+                buttons[:2],
+                buttons[2:],
+                 [InlineKeyboardButton("All", callback_data="all")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.callback_query.edit_message_reply_markup(
+                reply_markup=reply_markup
+            )
+
+            context.user_data["surfaces"] = None
             reply_keyboard = [["10:00", "15:00", "18:00"]]
-            await update.message.reply_text(
-                f"Great,  will include {context.user_data['surfaces']} in the filtering- Now select a start hour (or type it) for filtering",
+            await update.callback_query.message.reply_text(
+                f"Great,  will include {surface} in the filtering- Now select a start hour (or type it) for filtering",
                 reply_markup=ReplyKeyboardMarkup(
                     reply_keyboard,
                     one_time_keyboard=True,
@@ -314,26 +326,42 @@ async def handle_surfaces(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             return HOURS_FILTER
 
-        context.user_data["surfaces"] = context.user_data.get("surfaces", []) + [
-            surface[:-1]
-        ]
-        choices = [
-            _surface + "✅"
-            if _surface in context.user_data["surfaces"]
-            else _surface + "❌"
-            for _surface in DEFAULT_SURFACES
-        ]
-        reply_keyboard = [choices[:2], choices[2:], ["all", "done"]]
-        await update.message.reply_text(
-            f"Great, will include {surface[:-1]} in the filtering- Now select another one or click done",
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard,
-                one_time_keyboard=True,
-                input_field_placeholder="Surfaces?",
-            ),
-        )
+        case "done":
+            reply_keyboard = [["10:00", "15:00", "18:00"]]
+            await update.callback_query.message.reply_text(
+                f"Great,  will include {context.user_data['surfaces']} in the filtering- Now select a start hour (or type it) for filtering",
+                reply_markup=ReplyKeyboardMarkup(
+                    reply_keyboard,
+                    one_time_keyboard=True,
+                    input_field_placeholder="Max hour?",
+                ),
+            )
 
-        return SURFACES_FILTER
+            return HOURS_FILTER
+        case _:
+            context.user_data["surfaces"] = context.user_data.get("surfaces", []) + [
+                surface
+            ]
+            buttons = [
+                InlineKeyboardButton(_surface + "✅", callback_data=_surface)
+                if _surface in context.user_data["surfaces"]
+                else InlineKeyboardButton(_surface + "❌", callback_data=_surface)
+                for _surface in DEFAULT_SURFACES
+            ]
+
+            keyboard = [
+                buttons[:2],
+                buttons[2:],
+                [InlineKeyboardButton("Done", callback_data="done"),
+                InlineKeyboardButton("All", callback_data="all")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.callback_query.edit_message_reply_markup(
+                reply_markup=reply_markup
+            )
+
+            return SURFACES_FILTER
 
 
 async def handle_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -500,7 +528,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)
             ],
             SURFACES_FILTER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surfaces)
+                CallbackQueryHandler(handle_surfaces)
             ],
             TYPES_FILTER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_surfaces)
